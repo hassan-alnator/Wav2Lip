@@ -50,6 +50,14 @@ parser.add_argument('--rotate', default=False, action='store_true',
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
 
+parser.add_argument('--blend', choices=['replace','feather','poisson'],
+                    default='feather',
+                    help='How to composite the generated patch. Default: feather (fast).')
+parser.add_argument('--feather', type=int, default=31,
+                    help='Odd Gaussian kernel for feathering; larger = softer edge.')
+parser.add_argument('--mouth_from', type=float, default=0.50,
+                    help='Fraction from top of face patch where mouth mask starts (0-1).')
+
 args = parser.parse_args()
 args.img_size = 96
 
@@ -268,7 +276,35 @@ def main():
 			y1, y2, x1, x2 = c
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
 
-			f[y1:y2, x1:x2] = p
+			if args.blend == 'replace':
+				f[y1:y2, x1:x2] = p  # original behavior
+
+			elif args.blend == 'feather':
+				# Feathered alpha blend on LOWER half of the face crop (mouth/jaw)
+				region = f[y1:y2, x1:x2]
+				h, w = p.shape[:2]
+				# build a 2D mask: 0 on top part, 1 on mouth/lower part, then blur
+				mask = np.zeros((h, w), dtype=np.float32)
+				start = int(h * args.mouth_from)            # e.g., 50% from top
+				mask[start:, :] = 1.0
+				k = args.feather if args.feather % 2 == 1 else args.feather + 1  # must be odd
+				mask = cv2.GaussianBlur(mask, (k, k), 0)
+				mask3 = mask[..., None]                     # to (h,w,1)
+
+				blended = (mask3 * p + (1.0 - mask3) * region).astype(np.uint8)
+				f[y1:y2, x1:x2] = blended
+
+			elif args.blend == 'poisson':
+				# Poisson seamlessClone over lower half (slower but artifact-resistant)
+				h, w = p.shape[:2]
+				mask = np.zeros((h, w), dtype=np.uint8)
+				start = int(h * args.mouth_from)
+				mask[start:, :] = 255
+				# Center the clone around the face crop center (slightly biased down)
+				cx = (x1 + x2) // 2
+				cy = (y1 + y2) // 2 + int(0.1 * (y2 - y1))
+				f = cv2.seamlessClone(p, f, mask, (cx, cy), cv2.NORMAL_CLONE)
+
 			out.write(f)
 
 	out.release()

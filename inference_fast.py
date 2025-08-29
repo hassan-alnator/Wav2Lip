@@ -231,14 +231,23 @@ def datagen(frames, mels):
 	else:
 		print('Using the specified bounding box instead of face detection...')
 		face_det_results = []
-		for _ in frames:
+		for _ in mels:  # Changed from frames to mels to match the number of mel chunks
 			x1, y1, x2, y2 = args.box
 			face_det_results.append([y1, y2, x1, x2])
 
+	print(f'Number of face detection results: {len(face_det_results)}')
+	print(f'Number of mel chunks: {len(mels)}')
+	
+	if len(face_det_results) == 0:
+		raise ValueError('No faces detected in the video. Please ensure the video contains a face or use --box parameter.')
+	
 	for i, m in enumerate(mels):
 		idx = 0 if args.static else i%len(frames)
 		frame_to_save = frames[idx].copy()
-		face = face_det_results[i if not args.static else 0].copy()
+		
+		# For video mode, use modulo to cycle through face detection results
+		face_idx = i % len(face_det_results) if not args.static else min(i, len(face_det_results) - 1)
+		face = face_det_results[face_idx].copy()
 
 		x1, y1, x2, y2 = face
 		face = frames[idx][y1:y2, x1:x2]

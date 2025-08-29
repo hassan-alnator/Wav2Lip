@@ -67,10 +67,10 @@ parser.add_argument('--sharpen_amount', type=float, default=0.5,
                     help='Sharpening strength (0.0-2.0, default: 0.5)')
 
 parser.add_argument('--temporal_smooth', action='store_true',
-                    help='Enable temporal smoothing to reduce mouth distortion and flickering')
+                    help='[EXPERIMENTAL] Enable temporal smoothing - may affect performance')
 
-parser.add_argument('--smooth_window', type=int, default=5,
-                    help='Temporal smoothing window size (3-7 frames, default: 5)')
+parser.add_argument('--smooth_window', type=int, default=3,
+                    help='Temporal smoothing window size (3-7 frames, default: 3)')
 
 parser.add_argument('--smooth_mode', choices=['light', 'medium', 'strong'],
                     default='light',
@@ -186,27 +186,21 @@ def multiscale_blend(pred, original, mask):
     """Blend at multiple scales to reduce artifacts"""
     h, w = original.shape[:2]
     
-    # Work at 1/4 resolution for smoother blending
-    scale = 0.25
+    # Work at 1/2 resolution for faster processing
+    scale = 0.5
     small_h, small_w = int(h * scale), int(w * scale)
     
     # Downsample everything
-    small_pred = cv2.resize(pred, (small_w, small_h), interpolation=cv2.INTER_AREA)
-    small_orig = cv2.resize(original, (small_w, small_h), interpolation=cv2.INTER_AREA)
-    small_mask = cv2.resize(mask, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    small_pred = cv2.resize(pred, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+    small_orig = cv2.resize(original, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+    small_mask = cv2.resize(mask, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
     
     # Blend at low resolution
     small_mask = small_mask[..., None]  # Add channel dimension
     blended = small_mask * small_pred + (1 - small_mask) * small_orig
     
-    # Upsample with cubic interpolation for smoothness
-    result = cv2.resize(blended, (w, h), interpolation=cv2.INTER_CUBIC)
-    
-    # Sharpen slightly to compensate for interpolation blur
-    kernel = np.array([[-0.5, -1, -0.5],
-                       [-1, 7, -1],
-                       [-0.5, -1, -0.5]])
-    result = cv2.filter2D(result, -1, kernel)
+    # Upsample with linear interpolation for speed
+    result = cv2.resize(blended, (w, h), interpolation=cv2.INTER_LINEAR)
     
     return np.clip(result, 0, 255).astype(np.uint8)
 
@@ -495,13 +489,8 @@ def main():
 			
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
 			
-			# Validate and fix distorted mouth shapes
-			if smoother and prev_patch is not None:
-				# Ensure prev_patch matches current size
-				if prev_patch.shape != p.shape:
-					prev_patch = cv2.resize(prev_patch, (p.shape[1], p.shape[0]))
-				p = smoother.validate_mouth_shape(p, prev_patch)
-			prev_patch = p.copy() if smoother else None
+			# Skip validation - it's making mouth worse
+			# Only use smoother for coordinate stabilization if enabled
 			
 			# Apply sharpening to the generated mouth if requested
 			if args.sharpen_mouth:

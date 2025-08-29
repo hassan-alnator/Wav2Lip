@@ -471,10 +471,25 @@ def main():
 			if smoother:
 				y1, y2, x1, x2 = smoother.smooth_coords((y1, y2, x1, x2))
 			
+			# Ensure coordinates are within frame bounds
+			h_frame, w_frame = f.shape[:2]
+			y1 = max(0, min(y1, h_frame))
+			y2 = max(0, min(y2, h_frame))
+			x1 = max(0, min(x1, w_frame))
+			x2 = max(0, min(x2, w_frame))
+			
+			# Skip if invalid region
+			if y2 <= y1 or x2 <= x1:
+				out.write(f)
+				continue
+			
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
 			
 			# Validate and fix distorted mouth shapes
 			if smoother and prev_patch is not None:
+				# Ensure prev_patch matches current size
+				if prev_patch.shape != p.shape:
+					prev_patch = cv2.resize(prev_patch, (p.shape[1], p.shape[0]))
 				p = smoother.validate_mouth_shape(p, prev_patch)
 			prev_patch = p.copy() if smoother else None
 			
@@ -492,30 +507,44 @@ def main():
 				mask = create_elliptical_mask(h, w, args.mouth_region_size)
 				mask3 = mask[..., None]
 				region = f[y1:y2, x1:x2]
+				# Ensure sizes match
+				if region.shape[:2] != p.shape[:2]:
+					p = cv2.resize(p, (region.shape[1], region.shape[0]))
+					mask = create_elliptical_mask(region.shape[0], region.shape[1], args.mouth_region_size)
+					mask3 = mask[..., None]
 				blended = (mask3 * p + (1.0 - mask3) * region)
 				f[y1:y2, x1:x2] = blended.astype(np.uint8)
 				
 			elif args.blend_method == 'multiscale':
 				# Multi-scale blending
+				region = f[y1:y2, x1:x2]
+				# Ensure sizes match
+				if region.shape[:2] != p.shape[:2]:
+					p = cv2.resize(p, (region.shape[1], region.shape[0]))
 				h, w = p.shape[:2]
 				mask = create_elliptical_mask(h, w, args.mouth_region_size)
-				region = f[y1:y2, x1:x2]
 				blended = multiscale_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
 				
 			elif args.blend_method == 'edge_aware':
 				# Edge-aware blending
+				region = f[y1:y2, x1:x2]
+				# Ensure sizes match
+				if region.shape[:2] != p.shape[:2]:
+					p = cv2.resize(p, (region.shape[1], region.shape[0]))
 				h, w = p.shape[:2]
 				mask = create_elliptical_mask(h, w, args.mouth_region_size)
-				region = f[y1:y2, x1:x2]
 				blended = edge_aware_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
 				
 			elif args.blend_method == 'guided':
 				# Guided filter blending
+				region = f[y1:y2, x1:x2]
+				# Ensure sizes match
+				if region.shape[:2] != p.shape[:2]:
+					p = cv2.resize(p, (region.shape[1], region.shape[0]))
 				h, w = p.shape[:2]
 				mask = create_elliptical_mask(h, w, args.mouth_region_size)
-				region = f[y1:y2, x1:x2]
 				blended = guided_filter_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
 			

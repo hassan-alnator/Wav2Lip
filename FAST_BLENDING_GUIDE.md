@@ -94,6 +94,8 @@ python inference_fast.py \
 - `--blur_intensity`: Gaussian blur kernel size for mask edges (21-101, must be odd, default: 51)
 - `--sharpen_mouth`: Enable sharpening filter on generated mouth for crisper details
 - `--sharpen_amount`: Sharpening strength (0.0-2.0, default: 0.5)
+- `--temporal_smooth`: Enable temporal smoothing to reduce mouth distortion and flickering
+- `--smooth_window`: Temporal smoothing window size (3-7 frames, default: 5)
 
 ### Standard Wav2Lip Parameters
 - `--checkpoint_path`: Path to Wav2Lip model checkpoint
@@ -116,17 +118,19 @@ python inference_fast.py \
 
 ## Optimization Tips
 
-### For Best Quality with Crisp Mouth
+### For Best Quality with Stable Mouth (Recommended)
 ```bash
 python inference_fast.py \
   --checkpoint_path checkpoints/wav2lip_gan.pth \
   --face video.mp4 \
   --audio audio.wav \
   --blend_method guided \
-  --mouth_region_size 0.55 \
-  --blur_intensity 61 \
+  --mouth_region_size 0.5 \
+  --blur_intensity 51 \
   --sharpen_mouth \
-  --sharpen_amount 0.7 \
+  --sharpen_amount 0.6 \
+  --temporal_smooth \
+  --smooth_window 5 \
   --pads 0 20 0 0 \
   --wav2lip_batch_size 32 \
   --outfile output.mp4
@@ -160,6 +164,12 @@ python inference_fast.py \
 ```
 
 ## Troubleshooting
+
+### Mouth Shape Distortion/Flickering?
+- Add `--temporal_smooth` flag to enable temporal smoothing
+- Adjust `--smooth_window` (3 for less smoothing, 7 for more)
+- Use with `--mouth_region_size 0.45` for best results
+- Combine with `--blend_method edge_aware` for stability
 
 ### Mouth Too Soft/Blurry?
 - Add `--sharpen_mouth` flag to enable sharpening

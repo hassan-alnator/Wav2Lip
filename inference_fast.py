@@ -60,6 +60,12 @@ parser.add_argument('--mouth_region_size', type=float, default=0.6,
 parser.add_argument('--blur_intensity', type=int, default=51,
                     help='Gaussian blur kernel size for mask edges (must be odd, 21-101)')
 
+parser.add_argument('--sharpen_mouth', action='store_true',
+                    help='Apply sharpening to the mouth region for crisper details')
+
+parser.add_argument('--sharpen_amount', type=float, default=0.5,
+                    help='Sharpening strength (0.0-2.0, default: 0.5)')
+
 args = parser.parse_args()
 args.img_size = 96
 
@@ -69,6 +75,19 @@ if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg
 mel_step_size = 16
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Using {} for inference.'.format(device))
+
+def sharpen_image(image, amount=0.5):
+    """Apply unsharp mask to sharpen the image"""
+    if amount <= 0:
+        return image
+    
+    # Create a blurred version
+    blurred = cv2.GaussianBlur(image, (0, 0), 2.0)
+    
+    # Calculate the sharpened version: original + amount * (original - blurred)
+    sharpened = cv2.addWeighted(image, 1.0 + amount, blurred, -amount, 0)
+    
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
 
 def create_elliptical_mask(h, w, mouth_region_size=0.6):
     """Create an elliptical mask for mouth region - very fast"""
@@ -382,6 +401,10 @@ def main():
 		for p, f, c in zip(pred, frames, coords):
 			y1, y2, x1, x2 = c
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+			
+			# Apply sharpening to the generated mouth if requested
+			if args.sharpen_mouth:
+				p = sharpen_image(p, args.sharpen_amount)
 			
 			if args.blend_method == 'original':
 				# Original hard paste

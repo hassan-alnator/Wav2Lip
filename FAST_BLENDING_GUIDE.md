@@ -92,6 +92,8 @@ python inference_fast.py \
 - `--blend_method`: Choose blending technique (`ellipse`, `multiscale`, `edge_aware`, `guided`, `original`)
 - `--mouth_region_size`: Size of mouth region to blend (0.4-0.8, default: 0.6)
 - `--blur_intensity`: Gaussian blur kernel size for mask edges (21-101, must be odd, default: 51)
+- `--sharpen_mouth`: Enable sharpening filter on generated mouth for crisper details
+- `--sharpen_amount`: Sharpening strength (0.0-2.0, default: 0.5)
 
 ### Standard Wav2Lip Parameters
 - `--checkpoint_path`: Path to Wav2Lip model checkpoint
@@ -114,7 +116,7 @@ python inference_fast.py \
 
 ## Optimization Tips
 
-### For Best Quality
+### For Best Quality with Crisp Mouth
 ```bash
 python inference_fast.py \
   --checkpoint_path checkpoints/wav2lip_gan.pth \
@@ -123,6 +125,8 @@ python inference_fast.py \
   --blend_method guided \
   --mouth_region_size 0.55 \
   --blur_intensity 61 \
+  --sharpen_mouth \
+  --sharpen_amount 0.7 \
   --pads 0 20 0 0 \
   --wav2lip_batch_size 32 \
   --outfile output.mp4
@@ -156,6 +160,11 @@ python inference_fast.py \
 ```
 
 ## Troubleshooting
+
+### Mouth Too Soft/Blurry?
+- Add `--sharpen_mouth` flag to enable sharpening
+- Adjust `--sharpen_amount` (0.3 for subtle, 1.0 for strong)
+- Reduce `--blur_intensity` to 31 or 21 (but may show seams)
 
 ### Seam Still Visible?
 - Increase `--blur_intensity` to 71 or 91

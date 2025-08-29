@@ -66,6 +66,12 @@ parser.add_argument('--sharpen_mouth', action='store_true',
 parser.add_argument('--sharpen_amount', type=float, default=0.5,
                     help='Sharpening strength (0.0-2.0, default: 0.5)')
 
+parser.add_argument('--temporal_smooth', action='store_true',
+                    help='Enable temporal smoothing to reduce mouth distortion and flickering')
+
+parser.add_argument('--smooth_window', type=int, default=5,
+                    help='Temporal smoothing window size (3-7 frames, default: 5)')
+
 args = parser.parse_args()
 args.img_size = 96
 
@@ -88,6 +94,62 @@ def sharpen_image(image, amount=0.5):
     sharpened = cv2.addWeighted(image, 1.0 + amount, blurred, -amount, 0)
     
     return np.clip(sharpened, 0, 255).astype(np.uint8)
+
+class TemporalSmooth:
+    """Temporal smoothing to reduce mouth distortion and flickering"""
+    def __init__(self, window_size=5):
+        self.window_size = window_size
+        self.frame_buffer = []
+        self.coord_buffer = []
+        
+    def smooth_coords(self, coords):
+        """Smooth face detection coordinates across frames"""
+        self.coord_buffer.append(coords)
+        if len(self.coord_buffer) > self.window_size:
+            self.coord_buffer.pop(0)
+        
+        if len(self.coord_buffer) < 2:
+            return coords
+        
+        # Average coordinates over window
+        avg_coords = np.mean(self.coord_buffer, axis=0).astype(int)
+        return tuple(avg_coords)
+    
+    def smooth_frame(self, frame, weight_current=0.6):
+        """Smooth generated frames with weighted average"""
+        self.frame_buffer.append(frame.copy())
+        if len(self.frame_buffer) > self.window_size:
+            self.frame_buffer.pop(0)
+        
+        if len(self.frame_buffer) < 2:
+            return frame
+        
+        # Create weights - more weight on recent frames
+        weights = np.linspace(0.1, weight_current, len(self.frame_buffer))
+        weights = weights / weights.sum()
+        
+        # Weighted average
+        smoothed = np.zeros_like(frame, dtype=np.float32)
+        for i, w in enumerate(weights):
+            smoothed += self.frame_buffer[i].astype(np.float32) * w
+        
+        return np.clip(smoothed, 0, 255).astype(np.uint8)
+    
+    def validate_mouth_shape(self, patch, prev_patch=None, threshold=0.3):
+        """Detect and fix distorted mouth shapes"""
+        if prev_patch is None:
+            return patch
+        
+        # Calculate difference between consecutive frames
+        diff = cv2.absdiff(patch, prev_patch)
+        diff_ratio = np.mean(diff) / 255.0
+        
+        # If change is too large, it's likely distortion
+        if diff_ratio > threshold:
+            # Blend with previous frame to reduce distortion
+            patch = cv2.addWeighted(patch, 0.5, prev_patch, 0.5, 0)
+        
+        return patch
 
 def create_elliptical_mask(h, w, mouth_region_size=0.6):
     """Create an elliptical mask for mouth region - very fast"""
@@ -379,6 +441,10 @@ def main():
 
 	batch_size = args.wav2lip_batch_size
 	gen = datagen(full_frames.copy(), mel_chunks)
+	
+	# Initialize temporal smoothing if enabled
+	smoother = TemporalSmooth(args.smooth_window) if args.temporal_smooth else None
+	prev_patch = None
 
 	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, 
 											total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
@@ -400,7 +466,17 @@ def main():
 		
 		for p, f, c in zip(pred, frames, coords):
 			y1, y2, x1, x2 = c
+			
+			# Apply temporal smoothing to coordinates if enabled
+			if smoother:
+				y1, y2, x1, x2 = smoother.smooth_coords((y1, y2, x1, x2))
+			
 			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+			
+			# Validate and fix distorted mouth shapes
+			if smoother and prev_patch is not None:
+				p = smoother.validate_mouth_shape(p, prev_patch)
+			prev_patch = p.copy() if smoother else None
 			
 			# Apply sharpening to the generated mouth if requested
 			if args.sharpen_mouth:
@@ -442,6 +518,10 @@ def main():
 				region = f[y1:y2, x1:x2]
 				blended = guided_filter_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
+			
+			# Apply temporal smoothing to final frame if enabled
+			if smoother:
+				f = smoother.smooth_frame(f, weight_current=0.7)
 			
 			out.write(f)
 

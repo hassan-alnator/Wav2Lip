@@ -72,6 +72,10 @@ parser.add_argument('--temporal_smooth', action='store_true',
 parser.add_argument('--smooth_window', type=int, default=5,
                     help='Temporal smoothing window size (3-7 frames, default: 5)')
 
+parser.add_argument('--smooth_mode', choices=['light', 'medium', 'strong'],
+                    default='light',
+                    help='Temporal smoothing intensity (default: light)')
+
 args = parser.parse_args()
 args.img_size = 96
 
@@ -111,9 +115,15 @@ class TemporalSmooth:
         if len(self.coord_buffer) < 2:
             return coords
         
-        # Average coordinates over window
-        avg_coords = np.mean(self.coord_buffer, axis=0).astype(int)
-        return tuple(avg_coords)
+        # Weighted average - more weight on recent coordinates
+        weights = np.linspace(0.3, 1.0, len(self.coord_buffer))
+        weights = weights / weights.sum()
+        
+        avg_coords = np.zeros(4)
+        for i, w in enumerate(weights):
+            avg_coords += np.array(self.coord_buffer[i]) * w
+        
+        return tuple(avg_coords.astype(int))
     
     def smooth_frame(self, frame, weight_current=0.6):
         """Smooth generated frames with weighted average"""
@@ -135,7 +145,7 @@ class TemporalSmooth:
         
         return np.clip(smoothed, 0, 255).astype(np.uint8)
     
-    def validate_mouth_shape(self, patch, prev_patch=None, threshold=0.3):
+    def validate_mouth_shape(self, patch, prev_patch=None, threshold=0.5):
         """Detect and fix distorted mouth shapes"""
         if prev_patch is None:
             return patch
@@ -144,10 +154,10 @@ class TemporalSmooth:
         diff = cv2.absdiff(patch, prev_patch)
         diff_ratio = np.mean(diff) / 255.0
         
-        # If change is too large, it's likely distortion
+        # Only blend if change is extremely large (likely distortion)
         if diff_ratio > threshold:
-            # Blend with previous frame to reduce distortion
-            patch = cv2.addWeighted(patch, 0.5, prev_patch, 0.5, 0)
+            # Slight blend to reduce distortion but maintain motion
+            patch = cv2.addWeighted(patch, 0.7, prev_patch, 0.3, 0)
         
         return patch
 
@@ -548,9 +558,8 @@ def main():
 				blended = guided_filter_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
 			
-			# Apply temporal smoothing to final frame if enabled
-			if smoother:
-				f = smoother.smooth_frame(f, weight_current=0.7)
+			# Don't smooth final frames - causes slow motion effect
+			# Only use smoother for coordinates and validation
 			
 			out.write(f)
 

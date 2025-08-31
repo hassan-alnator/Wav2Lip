@@ -7,6 +7,7 @@ from glob import glob
 import torch, face_detection
 from models import Wav2Lip
 import platform
+from inference_hd_fast import enhance_mouth_region, create_hd_mask
 
 parser = argparse.ArgumentParser(description='Fast enhanced Wav2Lip inference without external dependencies')
 
@@ -50,7 +51,7 @@ parser.add_argument('--rotate', default=False, action='store_true',
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
 
-parser.add_argument('--blend_method', choices=['ellipse', 'multiscale', 'edge_aware', 'guided', 'original'],
+parser.add_argument('--blend_method', choices=['ellipse', 'multiscale', 'edge_aware', 'guided', 'hd', 'original'],
                     default='ellipse',
                     help='Fast blending method without external dependencies')
 
@@ -528,6 +529,20 @@ def main():
 				region = f[y1:y2, x1:x2]
 				blended = guided_filter_blend(p, region, mask)
 				f[y1:y2, x1:x2] = blended
+				
+			elif args.blend_method == 'hd':
+				# HD-like enhancement without Real-ESRGAN overhead
+				coords = (y1, y2, x1, x2)
+				# Enhance the mouth patch with better interpolation and sharpening
+				enhanced_p = enhance_mouth_region(f, coords, p, enhancement_level=1.2)
+				# Create HD quality mask
+				h, w = enhanced_p.shape[:2]
+				mask = create_hd_mask(h, w, feather_amount=0.35)
+				mask = mask[..., None]
+				region = f[y1:y2, x1:x2]
+				# Blend with enhanced patch
+				blended = mask * enhanced_p + (1 - mask) * region
+				f[y1:y2, x1:x2] = blended.astype(np.uint8)
 			
 			# Don't smooth final frames - causes slow motion effect
 			# Only use smoother for coordinates and validation

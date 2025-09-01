@@ -80,6 +80,12 @@ parser.add_argument('--smooth_mode', choices=['light', 'medium', 'strong'],
 parser.add_argument('--fp16', action='store_true',
                     help='Use FP16 (half precision) for 30-50% faster inference with no quality loss')
 
+parser.add_argument('--silence_gating', action='store_true',
+                    help='Skip processing silent frames for 20-30% speed boost')
+
+parser.add_argument('--silence_threshold', type=float, default=0.01,
+                    help='Audio amplitude threshold for silence detection (0.001-0.1, default: 0.01)')
+
 args = parser.parse_args()
 args.img_size = 96
 

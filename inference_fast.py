@@ -316,10 +316,11 @@ def face_detect(images):
 
 def datagen(frames, mels, silent_frames=None):
 	img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
-	silent_batch = []  # Track which frames are silent
 	
-	if silent_frames is None:
-		silent_frames = [False] * len(mels)
+	# Only track silent frames if silence gating is enabled
+	has_silence_gating = silent_frames is not None
+	if has_silence_gating:
+		silent_batch = []
 
 	if args.box[0] == -1:
 		if not args.static:
@@ -355,7 +356,8 @@ def datagen(frames, mels, silent_frames=None):
 		mel_batch.append(m)
 		frame_batch.append(frame_to_save)
 		coords_batch.append((y1, y2, x1, x2))
-		silent_batch.append(silent_frames[i])
+		if has_silence_gating:
+			silent_batch.append(silent_frames[i])
 
 		if len(img_batch) >= args.wav2lip_batch_size:
 			img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
@@ -366,8 +368,12 @@ def datagen(frames, mels, silent_frames=None):
 			img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
 			mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
-			yield img_batch, mel_batch, frame_batch, coords_batch, silent_batch
-			img_batch, mel_batch, frame_batch, coords_batch, silent_batch = [], [], [], [], []
+			if has_silence_gating:
+				yield img_batch, mel_batch, frame_batch, coords_batch, silent_batch
+				img_batch, mel_batch, frame_batch, coords_batch, silent_batch = [], [], [], [], []
+			else:
+				yield img_batch, mel_batch, frame_batch, coords_batch
+				img_batch, mel_batch, frame_batch, coords_batch = [], [], [], []
 
 	if len(img_batch) > 0:
 		img_batch, mel_batch = np.asarray(img_batch), np.asarray(mel_batch)
@@ -378,7 +384,10 @@ def datagen(frames, mels, silent_frames=None):
 		img_batch = np.concatenate((img_masked, img_batch), axis=3) / 255.
 		mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
-		yield img_batch, mel_batch, frame_batch, coords_batch
+		if has_silence_gating:
+			yield img_batch, mel_batch, frame_batch, coords_batch, silent_batch
+		else:
+			yield img_batch, mel_batch, frame_batch, coords_batch
 
 def load_model(path):
 	model = Wav2Lip()
@@ -450,31 +459,14 @@ def main():
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
 
 	mel_chunks = []
-	audio_chunks = []  # Store audio for silence detection
 	mel_idx_multiplier = 80./fps 
-	audio_idx_multiplier = 16000./fps  # 16kHz sample rate
 	i = 0
 	while 1:
 		start_idx = int(i * mel_idx_multiplier)
-		audio_start_idx = int(i * audio_idx_multiplier)
-		
 		if start_idx + mel_step_size > len(mel[0]):
 			mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
-			# Get corresponding audio chunk for silence detection
-			if audio_start_idx < len(wav):
-				audio_chunk = wav[audio_start_idx:audio_start_idx + int(audio_idx_multiplier)]
-			else:
-				audio_chunk = np.array([])
-			audio_chunks.append(audio_chunk)
 			break
-			
 		mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
-		# Get corresponding audio chunk
-		if audio_start_idx < len(wav):
-			audio_chunk = wav[audio_start_idx:audio_start_idx + int(audio_idx_multiplier)]
-		else:
-			audio_chunk = np.array([])
-		audio_chunks.append(audio_chunk)
 		i += 1
 
 	print("Length of mel chunks: {}".format(len(mel_chunks)))
@@ -486,11 +478,22 @@ def main():
 
 	full_frames = full_frames[:len(mel_chunks)]
 
-	# Detect silent frames if silence gating is enabled
-	silent_frames = []
+	# Only process silence detection if enabled
 	if args.silence_gating:
-		for i, audio_chunk in enumerate(audio_chunks):
-			# Check if frame is silent (low amplitude)
+		# Build audio chunks only when needed
+		audio_chunks = []
+		audio_idx_multiplier = 16000./fps  # 16kHz sample rate
+		for i in range(len(mel_chunks)):
+			audio_start_idx = int(i * audio_idx_multiplier)
+			if audio_start_idx < len(wav):
+				audio_chunk = wav[audio_start_idx:audio_start_idx + int(audio_idx_multiplier)]
+			else:
+				audio_chunk = np.array([])
+			audio_chunks.append(audio_chunk)
+		
+		# Detect silent frames
+		silent_frames = []
+		for audio_chunk in audio_chunks:
 			if len(audio_chunk) > 0:
 				amplitude = np.max(np.abs(audio_chunk))
 				is_silent = amplitude < args.silence_threshold
@@ -501,7 +504,8 @@ def main():
 		silent_count = sum(silent_frames)
 		print(f"Detected {silent_count}/{len(silent_frames)} silent frames ({silent_count*100//len(silent_frames)}%) - will skip processing")
 	else:
-		silent_frames = [False] * len(mel_chunks)
+		# No silence detection - use None to signal this to datagen
+		silent_frames = None
 
 	batch_size = args.wav2lip_batch_size
 	gen = datagen(full_frames.copy(), mel_chunks, silent_frames)
@@ -569,13 +573,14 @@ def main():
 				x1 = max(0, min(x1, w_frame))
 				x2 = max(0, min(x2, w_frame))
 			
-			# Keep original 96x96 for HD mode
-			p_original = p.astype(np.uint8)
-			
-			# Only resize for non-HD methods
-			if args.blend_method != 'hd':
-				# Use CUBIC for better quality without much speed penalty
-				p = cv2.resize(p_original, (x2 - x1, y2 - y1), interpolation=cv2.INTER_CUBIC)
+			# Handle HD mode separately
+			if args.blend_method == 'hd':
+				# Keep original 96x96 for HD enhancement
+				p_original = p.astype(np.uint8)
+				# HD enhancement will happen later in the hd block
+			else:
+				# For non-HD methods, resize directly
+				p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1), interpolation=cv2.INTER_CUBIC)
 				
 				# Apply sharpening to the generated mouth if requested
 				if args.sharpen_mouth:

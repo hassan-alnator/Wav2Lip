@@ -148,8 +148,9 @@ python inference_fast.py \
 2. Fixed HD mode not actually enhancing (was using wrong patch)
 3. Removed redundant resize operations for speed
 4. Optimized blend methods for performance
-5. **Added FP16 optimization** - 30-50% speed boost with no quality loss
-6. **Added silence gating** - Skips 20-30% of frames during silence
+5. **Added FP16 optimization** - 30-50% speed boost with no quality loss (use --fp16)
+6. **Added silence gating** - Skips 20-30% of frames during silence (use --silence_gating)
+7. **Removed overhead when features disabled** - Default speed restored when not using optional flags
 
 ## Testing Approach
 When testing changes:

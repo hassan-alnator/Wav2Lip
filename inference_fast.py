@@ -494,8 +494,8 @@ def main():
 			
 			# Only resize for non-HD methods
 			if args.blend_method != 'hd':
-				# Regular modes use LINEAR interpolation (faster but lower quality)
-				p = cv2.resize(p_original, (x2 - x1, y2 - y1), interpolation=cv2.INTER_LINEAR)
+				# Use CUBIC for better quality without much speed penalty
+				p = cv2.resize(p_original, (x2 - x1, y2 - y1), interpolation=cv2.INTER_CUBIC)
 				
 				# Apply sharpening to the generated mouth if requested
 				if args.sharpen_mouth:
@@ -539,23 +539,17 @@ def main():
 				f[y1:y2, x1:x2] = blended
 				
 			elif args.blend_method == 'hd':
-				# HD-like enhancement without Real-ESRGAN overhead
+				# Fast HD enhancement - better quality without slowdown
 				coords = (y1, y2, x1, x2)
-				# Use ORIGINAL 96x96 patch for HD enhancement
-				# This applies LANCZOS4 upscaling and other enhancements
-				enhancement_level = args.sharpen_amount if args.sharpen_mouth else 0.8
-				enhanced_p = enhance_mouth_region(f, coords, p_original, enhancement_level=enhancement_level)
-				# Create HD quality mask
-				h, w = enhanced_p.shape[:2]
-				mask = create_hd_mask(h, w, feather_amount=(100 - args.blur_intensity) / 100.0)
-				mask = mask[..., None]
+				# Use original 96x96 for better upscaling
+				enhancement_level = args.sharpen_amount if args.sharpen_mouth else 0.7
+				p = enhance_mouth_region(f, coords, p_original, enhancement_level=enhancement_level)
+				# Simple elliptical mask (fast)
+				h, w = p.shape[:2]
+				mask = create_elliptical_mask(h, w, args.mouth_region_size)
+				mask3 = mask[..., None]
 				region = f[y1:y2, x1:x2]
-				# Apply mouth region size
-				if args.mouth_region_size < 1.0:
-					center_mask = create_elliptical_mask(h, w, args.mouth_region_size)
-					mask = mask * center_mask[..., None]
-				# Blend with enhanced patch
-				blended = mask * enhanced_p + (1 - mask) * region
+				blended = (mask3 * p + (1.0 - mask3) * region)
 				f[y1:y2, x1:x2] = blended.astype(np.uint8)
 			
 			# Don't smooth final frames - causes slow motion effect

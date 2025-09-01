@@ -464,7 +464,7 @@ def main():
 	full_frames = full_frames[:len(mel_chunks)]
 
 	batch_size = args.wav2lip_batch_size
-	gen = datagen(full_frames.copy(), mel_chunks)
+	gen = datagen(full_frames.copy(), mel_chunks, silent_frames)
 	
 	# Initialize temporal smoothing if enabled
 	smoother = TemporalSmooth(args.smooth_window) if args.temporal_smooth else None

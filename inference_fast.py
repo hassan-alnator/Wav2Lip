@@ -444,14 +444,31 @@ def main():
 		raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
 
 	mel_chunks = []
+	audio_chunks = []  # Store audio for silence detection
 	mel_idx_multiplier = 80./fps 
+	audio_idx_multiplier = 16000./fps  # 16kHz sample rate
 	i = 0
 	while 1:
 		start_idx = int(i * mel_idx_multiplier)
+		audio_start_idx = int(i * audio_idx_multiplier)
+		
 		if start_idx + mel_step_size > len(mel[0]):
 			mel_chunks.append(mel[:, len(mel[0]) - mel_step_size:])
+			# Get corresponding audio chunk for silence detection
+			if audio_start_idx < len(wav):
+				audio_chunk = wav[audio_start_idx:audio_start_idx + int(audio_idx_multiplier)]
+			else:
+				audio_chunk = np.array([])
+			audio_chunks.append(audio_chunk)
 			break
+			
 		mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
+		# Get corresponding audio chunk
+		if audio_start_idx < len(wav):
+			audio_chunk = wav[audio_start_idx:audio_start_idx + int(audio_idx_multiplier)]
+		else:
+			audio_chunk = np.array([])
+		audio_chunks.append(audio_chunk)
 		i += 1
 
 	print("Length of mel chunks: {}".format(len(mel_chunks)))
@@ -462,6 +479,23 @@ def main():
 		print(f"Using {args.blend_method} blend mode")
 
 	full_frames = full_frames[:len(mel_chunks)]
+
+	# Detect silent frames if silence gating is enabled
+	silent_frames = []
+	if args.silence_gating:
+		for i, audio_chunk in enumerate(audio_chunks):
+			# Check if frame is silent (low amplitude)
+			if len(audio_chunk) > 0:
+				amplitude = np.max(np.abs(audio_chunk))
+				is_silent = amplitude < args.silence_threshold
+			else:
+				is_silent = True
+			silent_frames.append(is_silent)
+		
+		silent_count = sum(silent_frames)
+		print(f"Detected {silent_count}/{len(silent_frames)} silent frames ({silent_count*100//len(silent_frames)}%) - will skip processing")
+	else:
+		silent_frames = [False] * len(mel_chunks)
 
 	batch_size = args.wav2lip_batch_size
 	gen = datagen(full_frames.copy(), mel_chunks, silent_frames)

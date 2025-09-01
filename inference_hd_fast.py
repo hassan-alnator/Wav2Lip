@@ -35,56 +35,31 @@ def fast_enhance_frame(frame, enhancement_level=1.5):
 def enhance_mouth_region(frame, coords, pred_patch, enhancement_level=1.2):
     """
     Specifically enhance the mouth region for better quality
+    THIS IS THE KEY DIFFERENCE FROM REGULAR BLENDING
     """
     y1, y2, x1, x2 = coords
     
-    # 1. Upscale the 96x96 patch with better interpolation
+    # 1. CRITICAL: Upscale the 96x96 patch with LANCZOS4 (much sharper than default LINEAR)
     target_h, target_w = y2 - y1, x2 - x1
     
-    # Use Lanczos interpolation for better quality than default
+    # This is the main improvement - better interpolation
     upscaled = cv2.resize(pred_patch, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
     
-    # 2. Apply targeted sharpening to mouth
-    # Create edge mask to sharpen only important features
-    edges = cv2.Canny(upscaled, 50, 150)
-    edges = cv2.dilate(edges, None, iterations=1)
-    edges = cv2.GaussianBlur(edges, (5, 5), 0) / 255.0
-    edges = edges[..., None]  # Add channel dimension
+    # 2. Strong sharpening to compensate for upscaling blur
+    if enhancement_level > 0:
+        # Unsharp mask - this makes a BIG difference
+        gaussian = cv2.GaussianBlur(upscaled, (0, 0), 2.0)
+        sharpened = cv2.addWeighted(upscaled, 1.0 + enhancement_level, gaussian, -enhancement_level, 0)
+        enhanced = np.clip(sharpened, 0, 255).astype(np.uint8)
+    else:
+        enhanced = upscaled
     
-    # Sharpen based on edges
-    gaussian = cv2.GaussianBlur(upscaled, (0, 0), 1.0)
-    sharpened = cv2.addWeighted(upscaled, 1.0 + enhancement_level, gaussian, -enhancement_level, 0)
-    
-    # Blend sharpened version based on edges
-    enhanced = edges * sharpened + (1 - edges) * upscaled
-    enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
-    
-    # 3. Color correction to match surrounding skin tone
+    # 3. Optional: Simple color adjustment to reduce color mismatch
+    # Just blend slightly with original for color consistency
     region = frame[y1:y2, x1:x2]
+    color_corrected = cv2.addWeighted(enhanced, 0.9, region, 0.1, 0)
     
-    # Match histogram for better color consistency
-    for c in range(3):
-        hist_region = cv2.calcHist([region], [c], None, [256], [0, 256])
-        hist_pred = cv2.calcHist([enhanced], [c], None, [256], [0, 256])
-        
-        # Simple histogram matching
-        cdf_region = hist_region.cumsum()
-        cdf_pred = hist_pred.cumsum()
-        
-        cdf_region = (cdf_region / cdf_region[-1] * 255).astype(np.uint8)
-        cdf_pred = (cdf_pred / cdf_pred[-1] * 255).astype(np.uint8)
-        
-        # Create lookup table
-        lut = np.zeros(256, dtype=np.uint8)
-        for i in range(256):
-            j = 0
-            while j < 255 and cdf_pred[i] > cdf_region[j]:
-                j += 1
-            lut[i] = j
-        
-        enhanced[:, :, c] = cv2.LUT(enhanced[:, :, c], lut)
-    
-    return enhanced
+    return color_corrected
 
 def create_hd_mask(h, w, feather_amount=0.3):
     """

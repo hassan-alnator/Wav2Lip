@@ -484,14 +484,16 @@ def main():
 				x1 = max(0, min(x1, w_frame))
 				x2 = max(0, min(x2, w_frame))
 			
-			p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
+			# Keep original 96x96 for HD mode
+			p_original = p.astype(np.uint8)
 			
-			# Skip validation - it's making mouth worse
-			# Only use smoother for coordinate stabilization if enabled
-			
-			# Apply sharpening to the generated mouth if requested
-			if args.sharpen_mouth:
-				p = sharpen_image(p, args.sharpen_amount)
+			# Only resize for non-HD methods
+			if args.blend_method != 'hd':
+				p = cv2.resize(p_original, (x2 - x1, y2 - y1))
+				
+				# Apply sharpening to the generated mouth if requested
+				if args.sharpen_mouth:
+					p = sharpen_image(p, args.sharpen_amount)
 			
 			if args.blend_method == 'original':
 				# Original hard paste
@@ -533,13 +535,19 @@ def main():
 			elif args.blend_method == 'hd':
 				# HD-like enhancement without Real-ESRGAN overhead
 				coords = (y1, y2, x1, x2)
-				# Enhance the mouth patch with better interpolation and sharpening
-				enhanced_p = enhance_mouth_region(f, coords, p, enhancement_level=1.2)
+				# Use ORIGINAL 96x96 patch for HD enhancement
+				# This applies LANCZOS4 upscaling and other enhancements
+				enhancement_level = args.sharpen_amount if args.sharpen_mouth else 0.8
+				enhanced_p = enhance_mouth_region(f, coords, p_original, enhancement_level=enhancement_level)
 				# Create HD quality mask
 				h, w = enhanced_p.shape[:2]
-				mask = create_hd_mask(h, w, feather_amount=0.35)
+				mask = create_hd_mask(h, w, feather_amount=(100 - args.blur_intensity) / 100.0)
 				mask = mask[..., None]
 				region = f[y1:y2, x1:x2]
+				# Apply mouth region size
+				if args.mouth_region_size < 1.0:
+					center_mask = create_elliptical_mask(h, w, args.mouth_region_size)
+					mask = mask * center_mask[..., None]
 				# Blend with enhanced patch
 				blended = mask * enhanced_p + (1 - mask) * region
 				f[y1:y2, x1:x2] = blended.astype(np.uint8)

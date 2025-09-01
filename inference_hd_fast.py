@@ -34,30 +34,58 @@ def fast_enhance_frame(frame, enhancement_level=1.5):
 
 def enhance_mouth_region(frame, coords, pred_patch, enhancement_level=1.2):
     """
-    Specifically enhance the mouth region for better quality
-    THIS IS THE KEY DIFFERENCE FROM REGULAR BLENDING
+    REAL HD enhancement that makes a visible difference
+    Multi-step process for significant quality improvement
     """
     y1, y2, x1, x2 = coords
-    
-    # 1. CRITICAL: Upscale the 96x96 patch with LANCZOS4 (much sharper than default LINEAR)
     target_h, target_w = y2 - y1, x2 - x1
     
-    # This is the main improvement - better interpolation
-    upscaled = cv2.resize(pred_patch, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+    # Step 1: Smart 2x upscaling first (this is key!)
+    # Upscale to 2x size with CUBIC for smoothness
+    double_size = cv2.resize(pred_patch, (192, 192), interpolation=cv2.INTER_CUBIC)
     
-    # 2. Strong sharpening to compensate for upscaling blur
+    # Step 2: Edge enhancement on upscaled version
+    # Detect edges to preserve details
+    gray = cv2.cvtColor(double_size, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 30, 100)
+    edges = cv2.GaussianBlur(edges, (3, 3), 1)
+    edges_3ch = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR) / 255.0
+    
+    # Enhance edges
+    edge_enhanced = double_size + (edges_3ch * 30)  # Add edge details back
+    edge_enhanced = np.clip(edge_enhanced, 0, 255).astype(np.uint8)
+    
+    # Step 3: Apply bilateral filter to smooth while preserving edges
+    smoothed = cv2.bilateralFilter(edge_enhanced, 5, 50, 50)
+    
+    # Step 4: Final resize to target with LANCZOS4
+    final = cv2.resize(smoothed, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+    
+    # Step 5: Multi-pass sharpening for crisp details
     if enhancement_level > 0:
-        # Unsharp mask - this makes a BIG difference
-        gaussian = cv2.GaussianBlur(upscaled, (0, 0), 2.0)
-        sharpened = cv2.addWeighted(upscaled, 1.0 + enhancement_level, gaussian, -enhancement_level, 0)
-        enhanced = np.clip(sharpened, 0, 255).astype(np.uint8)
+        # First pass - general sharpening
+        blur1 = cv2.GaussianBlur(final, (0, 0), 1.0)
+        sharp1 = cv2.addWeighted(final, 1.5, blur1, -0.5, 0)
+        
+        # Second pass - fine detail sharpening
+        blur2 = cv2.GaussianBlur(sharp1, (3, 3), 0.5)
+        sharp2 = cv2.addWeighted(sharp1, 1.0 + enhancement_level, blur2, -enhancement_level, 0)
+        
+        enhanced = np.clip(sharp2, 0, 255).astype(np.uint8)
     else:
-        enhanced = upscaled
+        enhanced = final
     
-    # 3. Optional: Simple color adjustment to reduce color mismatch
-    # Just blend slightly with original for color consistency
+    # Step 6: Adaptive histogram equalization for better contrast
+    lab = cv2.cvtColor(enhanced, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    l = clahe.apply(l)
+    enhanced = cv2.merge([l, a, b])
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    
+    # Step 7: Slight color correction with original
     region = frame[y1:y2, x1:x2]
-    color_corrected = cv2.addWeighted(enhanced, 0.9, region, 0.1, 0)
+    color_corrected = cv2.addWeighted(enhanced, 0.85, region, 0.15, 0)
     
     return color_corrected
 

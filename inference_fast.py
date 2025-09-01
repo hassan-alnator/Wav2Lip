@@ -441,6 +441,11 @@ def main():
 		i += 1
 
 	print("Length of mel chunks: {}".format(len(mel_chunks)))
+	
+	if args.blend_method == 'hd':
+		print("Using HD enhancement mode - expect better quality but slightly slower processing")
+	else:
+		print(f"Using {args.blend_method} blend mode")
 
 	full_frames = full_frames[:len(mel_chunks)]
 
@@ -489,7 +494,8 @@ def main():
 			
 			# Only resize for non-HD methods
 			if args.blend_method != 'hd':
-				p = cv2.resize(p_original, (x2 - x1, y2 - y1))
+				# Regular modes use LINEAR interpolation (faster but lower quality)
+				p = cv2.resize(p_original, (x2 - x1, y2 - y1), interpolation=cv2.INTER_LINEAR)
 				
 				# Apply sharpening to the generated mouth if requested
 				if args.sharpen_mouth:
